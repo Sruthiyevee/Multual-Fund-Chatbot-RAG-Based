@@ -8,6 +8,7 @@
 5. [Website Content Integration](#5-website-content-integration)
 6. [Deployment Guide](#6-deployment-guide)
 7. [Troubleshooting](#7-troubleshooting)
+8. [Phase 8: Voice I/O](#phase-8-voice-io)
 
 ---
 
@@ -37,7 +38,7 @@ This document outlines the complete architecture for a **Facts-Only Mutual Fund 
 
 ### 2.1 Phase Relationship Diagram
 
-This diagram shows how all 6 phases connect and flow from data collection to user interaction:
+This diagram shows how all phases connect and flow from data collection to user interaction (including Phase 8 Voice I/O):
 
 ```mermaid
 graph LR
@@ -70,6 +71,11 @@ graph LR
         P5A[CLI]
         P5B[Streamlit<br/>Web App]
     end
+
+    subgraph "PHASE 8: Voice I/O"
+        P8A[Mic Input] --> P8B[Groq Whisper<br/>Speech to Text]
+        P8C[gTTS<br/>Text to Speech]
+    end
     
     P0 -->|URLs| P1A
     P1D -->|Input| P2A
@@ -78,6 +84,10 @@ graph LR
     P4C -->|Display| P5A
     P4C -->|Display| P5B
     
+    P8A -->|Voice Query| P8B
+    P8B -->|Transcribed Text| P5B
+    P5B -->|Read Out Answer| P8C
+    
     style P0 fill:#e3f2fd
     style P1D fill:#e8f5e9
     style P2C fill:#fff3e0
@@ -85,6 +95,8 @@ graph LR
     style P4C fill:#fce4ec
     style P5A fill:#e0f2f1
     style P5B fill:#e0f2f1
+    style P8B fill:#ffe0b2
+    style P8C fill:#ffe0b2
 ```
 
 **Key Relationships**:
@@ -113,17 +125,22 @@ graph TB
     end
     
     subgraph "RUNTIME - USER QUERY"
-        H[User Question] --> I{Conversational?<br/>thanks/ok/hi}
+        Voice[User Voice Input] --> Whisper[Groq Whisper STT]
+        Whisper -->|Transcribed Text| H[User Question]
+        Text[User Text Input] --> H
+        H --> I{Conversational?<br/>thanks/ok/hi}
         I -->|Yes| J[Simple Response<br/>0 API calls]
         I -->|No| K[Phase 3: Retrieval<br/>Local Embeddings]
         K --> L[Top 5 Chunks<br/>with metadata]
         L --> M[Phase 4: Generation<br/>1 Groq API call]
         M --> N[Answer + Sources]
+        N --> TTS[gTTS Text to Speech]
     end
     
     subgraph "USER INTERFACES"
         N --> O[Phase 5: CLI<br/>internal_chat_cli.py]
-        N --> P[Phase 6: Streamlit<br/>app.py]
+        N --> P[Phase 6: Streamlit app.py]
+        TTS -->|Read Out| P
     end
     
     G -.->|Loaded at startup| K
@@ -421,6 +438,24 @@ streamlit run phase_6_streamlit_app/app.py
 
 ---
 
+### Phase 8: Voice Input/Output (Voice I/O)
+**Goal**: Add microphone recording, speech-to-text transcription, and text-to-speech feedback.
+
+**Location**: [`phase_6_streamlit_app/voice_utils.py`](file:///d:/Product%20Management/cursor/latest_mutual-fund-rag-chatbot-gemini-git-action-streamlit/phase_6_streamlit_app/voice_utils.py)
+
+**Components**:
+1. **Voice Input Widget**: Embeds a microphone-recorder component using `streamlit-mic-recorder` in the Streamlit UI, aligned next to `st.chat_input`.
+2. **Transcription Engine (STT)**: Sends captured audio bytes directly to Groq's hosted Whisper API.
+   - Runs `whisper-large-v3-turbo` model first, with fallback to `whisper-large-v3`.
+   - Uses domain vocabulary biasing (including fund names like "HDFC Midcap Opportunities Fund", "HDFC Flexi Cap Fund", and financial jargon like "SIP", "NAV", "expense ratio", "exit load", "riskometer") via the Whisper prompt parameter.
+   - Gracefully intercepts empty or quiet recordings to prevent unnecessary processing or API errors.
+3. **Pipeline Dispatcher**: Automatically feeds the transcribed text into the existing RAG classifier and similarity retrieval pipeline without duplicating code. Stored user message displays with a `🎤` prefix for transparency.
+4. **Voice Feedback (TTS)**: Translates assistant text replies into spoken audio bytes using `gtts` (Google Text-to-Speech).
+   - Features text cleaning (strips emojis, markdown syntax, and hyperlink wrappers) to ensure smooth pronunciation.
+   - Provides a "Read answer aloud" toggle below each assistant response to play audio directly on demand.
+
+---
+
 ## 4. API Efficiency
 
 ### Single API Call Architecture
@@ -561,6 +596,7 @@ Streamlit-RAG-based-Mutual-Fund-FAQ-Chatbot/
 │   │   ├── secrets.toml        # Gitignored
 │   │   └── secrets.toml.example
 │   ├── app.py
+│   ├── voice_utils.py          # Voice transcription & readout helper
 │   └── requirements.txt
 ├── phase7_scheduled_refresh/
 │   └── refresh.py              # Data refresh orchestrator
